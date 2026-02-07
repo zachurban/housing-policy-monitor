@@ -1,0 +1,19 @@
+# Civic Housing Intelligence – Dependencies
+# Install: pip install -r requirements.txt
+
+# Core
+requests>=2.28.0
+python-dotenv>=1.0.0
+
+# Audio/video download
+yt-dlp>=2023.12.30
+
+# Transcription (Deepgram)
+# The SDK is optional – the pipeline uses the REST API directly.
+# Uncomment to use the official SDK instead:
+# deepgram-sdk>=3.0.0
+
+# AI Analysis (Anthropic)
+# The SDK is optional – the pipeline uses the REST API directly.
+# Uncomment to use the official SDK instead:
+# anthropic>=0.25.0
