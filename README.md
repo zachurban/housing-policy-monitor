@@ -1,4 +1,4 @@
-# Housing Sentiment and Policy Monitor
+# HousingEar - Housing Sentiment and Policy Monitor
 
 AI-powered pipeline for ingesting public city council, planning commission, housing policy committee meetings and extracting affordable housing policy intelligence. Automatically transcribes, analyzes, and structures housing discussions from YouTube and Granicus to track zoning changes, funding commitments, community sentiment, and regulatory trends across Colorado jurisdictions.
 
