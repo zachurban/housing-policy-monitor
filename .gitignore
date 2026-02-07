@@ -1,0 +1,24 @@
+# Environment / secrets
+.env
+*.env
+
+# Data directory (large files)
+meetings_data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
