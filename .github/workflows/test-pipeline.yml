@@ -1,0 +1,77 @@
+name: Test Pipeline (1 Meeting)
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+jobs:
+  test-single-meeting:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Install FFmpeg
+      run: sudo apt-get update && sudo apt-get install -y ffmpeg
+    
+    - name: Install Python dependencies
+      run: pip install -r requirements.txt
+    
+    - name: Verify API keys are set
+      env:
+        DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      run: |
+        if [ -z "$DEEPGRAM_API_KEY" ]; then
+          echo "❌ DEEPGRAM_API_KEY not set in GitHub Secrets"
+          exit 1
+        fi
+        if [ -z "$ANTHROPIC_API_KEY" ]; then
+          echo "❌ ANTHROPIC_API_KEY not set in GitHub Secrets"
+          exit 1
+        fi
+        echo "✅ API keys configured"
+    
+    - name: Create test script
+      run: |
+        cat > test_quick.py << 'EOF'
+        from meeting_ingestion_pipeline import MeetingPipeline
+        
+        print("\n" + "="*60)
+        print("QUICK TEST: Processing 1 Denver meeting")
+        print("="*60 + "\n")
+        
+        pipeline = MeetingPipeline()
+        pipeline.process_city('denver', max_meetings=1)
+        
+        print("\n✅ Test complete!")
+        EOF
+    
+    - name: Run quick test (1 meeting)
+      env:
+        DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      run: python test_quick.py
+    
+    - name: Show results
+      if: always()
+      run: |
+        echo "=== Meeting Database ==="
+        cat meetings_data/meetings.json 2>/dev/null || echo "No meetings.json found"
+        echo ""
+        echo "=== Generated Files ==="
+        find meetings_data -type f 2>/dev/null || echo "No files found"
+    
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: meetings_data/
+        retention-days: 7
