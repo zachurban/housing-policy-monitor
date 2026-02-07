@@ -1,0 +1,93 @@
+name: Process Public Meetings
+
+on:
+  # Run automatically on a schedule
+  schedule:
+    - cron: '0 2 * * 1'  # Every Monday at 2 AM UTC (6 PM Sunday MST)
+  
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+    inputs:
+      max_meetings:
+        description: 'Max meetings per city'
+        required: false
+        default: '3'
+      cities:
+        description: 'Cities to process (comma-separated: denver,aurora,lakewood or "all")'
+        required: false
+        default: 'all'
+
+jobs:
+  process-meetings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180  # 3 hours max
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install FFmpeg
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+    
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Verify environment
+      run: |
+        echo "Python version:"
+        python --version
+        echo "FFmpeg version:"
+        ffmpeg -version | head -n 1
+        echo "Installed packages:"
+        pip list
+    
+    - name: Run meeting ingestion pipeline
+      env:
+        DEEPGRAM_API_KEY: ${{ secrets.DEEPGRAM_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      run: |
+        echo "Starting pipeline..."
+        python meeting_ingestion_pipeline.py
+    
+    - name: Generate analytics report
+      if: success()
+      run: |
+        echo "Generating analytics..."
+        python example_analysis.py > analytics_output.txt 2>&1 || true
+    
+    - name: Upload meeting data
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: meeting-data-${{ github.run_number }}
+        path: |
+          meetings_data/
+          analytics_output.txt
+        retention-days: 90
+    
+    - name: Upload summaries only (smaller artifact)
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: summaries-${{ github.run_number }}
+        path: |
+          meetings_data/analysis/*.md
+          meetings_data/meetings.json
+          meetings_data/intelligence_report.md
+        retention-days: 365
+    
+    - name: Check for errors
+      if: failure()
+      run: |
+        echo "Pipeline failed. Check logs above."
+        ls -la meetings_data/ || echo "No meetings_data directory"
