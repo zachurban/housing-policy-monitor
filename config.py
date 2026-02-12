@@ -59,7 +59,7 @@ COLORADO_CITIES = {
     },
     "Boulder": {
         "youtube_channel": "@CityofBoulderGov",
-        "youtube_url": https://www.youtube.com/@CityofBoulderGov,
+        "youtube_url": "https://www.youtube.com/@CityofBoulderGov",
         "granicus_site": "boulder.granicus.com",
         "granicus_site_id": 5,
         "granicus_clip_id_prefix": "boulder",
