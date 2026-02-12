@@ -35,6 +35,15 @@ COLORADO_CITIES = {
             "Planning Board",
             "Land Use, Transportation & Infrastructure Committee",
         ],
+        "legistar_client": "denver",
+        "legistar_housing_bodies": [
+            "City Council",
+            "Community Planning and Housing",
+            "Safety, Housing, Education & Homelessness Committee",
+            "Land Use, Transportation & Infrastructure Committee",
+            "Neighborhood, Community & Business Revitalization Committee",
+            "Budget and Policy Committee",
+        ],
     },
     "Aurora": {
         "youtube_channel": "@theaurorachannel",
@@ -42,6 +51,12 @@ COLORADO_CITIES = {
         "granicus_site": "aurora.granicus.com",
         "granicus_clip_id_prefix": "aurora",
         "meeting_bodies": [
+            "City Council",
+            "Planning Commission",
+            "Housing and Managed Care Committee",
+        ],
+        "legistar_client": "aurora",
+        "legistar_housing_bodies": [
             "City Council",
             "Planning Commission",
             "Housing and Managed Care Committee",
@@ -153,6 +168,16 @@ HOUSING_KEYWORDS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Legistar API configuration
+# ---------------------------------------------------------------------------
+LEGISTAR_CONFIG = {
+    "base_url": "https://webapi.legistar.com/v1",
+    "default_lookback_days": 90,
+    "rate_limit_delay": 0.5,  # seconds between API calls
+    "page_size": 1000,  # max results per OData query
+}
+
+# ---------------------------------------------------------------------------
 # Claude analysis prompt
 # ---------------------------------------------------------------------------
 ANALYSIS_PROMPT_TEMPLATE = """You are an expert housing policy analyst reviewing a city council meeting transcript.
@@ -227,6 +252,75 @@ IMPORTANT:
 - Identify speakers by name when possible, otherwise by role (councilmember, public commenter, staff).
 
 TRANSCRIPT:
+{transcript}
+"""
+
+AGENDA_ANALYSIS_PROMPT_TEMPLATE = """You are an expert housing policy analyst reviewing a city council meeting agenda and legislative items.
+
+JURISDICTION: {jurisdiction}
+MEETING TITLE: {title}
+MEETING DATE: {date}
+
+Analyze the following agenda items and legislative text. Extract ALL affordable housing-related information.
+Return your analysis as a single JSON object with exactly these keys:
+
+{{
+  "housing_topics": ["list of housing topics on the agenda"],
+  "policy_proposals": [
+    {{
+      "type": "ordinance|resolution|amendment|motion|recommendation",
+      "description": "what is being proposed",
+      "status": "introduced|discussed|tabled|approved|denied|pending",
+      "vote_result": "unanimous|split (X-Y)|voice vote|null"
+    }}
+  ],
+  "sentiment": {{
+    "overall": "supportive|opposed|mixed|neutral",
+    "details": "brief summary based on agenda framing and staff recommendations",
+    "public_comment_summary": "summary of any public hearing items if listed"
+  }},
+  "projects": [
+    {{
+      "name": "project name if given",
+      "address": "address or location",
+      "units_total": null,
+      "units_affordable": null,
+      "affordability_level": "e.g. 60% AMI",
+      "developer": "developer name if mentioned",
+      "status": "proposed|under_review|approved|under_construction|completed"
+    }}
+  ],
+  "regulatory_changes": [
+    {{
+      "type": "zoning|building_code|ordinance|policy",
+      "description": "what changed or is proposed to change",
+      "impact": "expected impact on housing"
+    }}
+  ],
+  "funding": [
+    {{
+      "amount": "dollar amount as string",
+      "source": "funding source",
+      "purpose": "what the money is for",
+      "status": "proposed|approved|allocated|disbursed"
+    }}
+  ],
+  "actions": [
+    "list of concrete actions scheduled (votes, hearings, deadlines)"
+  ],
+  "quotes": [],
+  "housing_relevance_score": 0.0,
+  "summary": "2-3 paragraph executive summary of housing-related agenda content"
+}}
+
+IMPORTANT:
+- housing_relevance_score should be 0.0-1.0 based on how much of the agenda focuses on housing.
+- If no housing topics are found, still return the JSON with empty lists and a low score.
+- Be precise with dollar amounts and unit counts.
+- Distinguish between ordinances, resolutions, and informational items.
+- Note any public hearing items related to housing.
+
+AGENDA ITEMS:
 {transcript}
 """
 

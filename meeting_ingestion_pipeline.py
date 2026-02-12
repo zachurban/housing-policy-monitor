@@ -29,6 +29,7 @@ from typing import Any
 import requests
 
 from config import (
+    AGENDA_ANALYSIS_PROMPT_TEMPLATE,
     ANALYSIS_DIR,
     ANALYSIS_PROMPT_TEMPLATE,
     API_CONFIG,
@@ -36,6 +37,7 @@ from config import (
     COLORADO_CITIES,
     DATA_DIR,
     HOUSING_KEYWORDS,
+    LEGISTAR_CONFIG,
     MEETING_TITLE_KEYWORDS,
     MEETINGS_DB,
     PROCESSING,
@@ -64,7 +66,7 @@ class Meeting:
     title: str
     date: str  # ISO format YYYY-MM-DD
     video_url: str
-    source: str  # "youtube" | "granicus"
+    source: str  # "youtube" | "granicus" | "legistar"
     duration_minutes: float = 0.0
     audio_path: str = ""
     transcript_path: str = ""
@@ -74,6 +76,8 @@ class Meeting:
     housing_relevance_score: float = 0.0
     processed: bool = False
     error: str = ""
+    legistar_event_id: int | None = None
+    agenda_items: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -506,6 +510,78 @@ class HousingAnalyzer:
 
         return analysis
 
+    def analyze_agenda(self, agenda_text: str, meeting: Meeting) -> dict[str, Any]:
+        """Analyze agenda text (instead of transcript) for housing policy data."""
+        if not self.api_key:
+            log.error("Anthropic API key not set (ANTHROPIC_API_KEY)")
+            return {}
+
+        analysis_json_path = ANALYSIS_DIR / f"{meeting.id}_analysis.json"
+        summary_md_path = ANALYSIS_DIR / f"{meeting.id}_summary.md"
+
+        if analysis_json_path.exists():
+            log.info("Analysis already exists: %s", analysis_json_path.name)
+            try:
+                return json.loads(analysis_json_path.read_text())
+            except json.JSONDecodeError:
+                pass
+
+        max_chars = self.config["max_transcript_chars"]
+        if len(agenda_text) > max_chars:
+            agenda_text = agenda_text[:max_chars] + "\n\n[AGENDA TEXT TRUNCATED]"
+
+        prompt = AGENDA_ANALYSIS_PROMPT_TEMPLATE.format(
+            jurisdiction=meeting.jurisdiction,
+            title=meeting.title,
+            date=meeting.date,
+            transcript=agenda_text,
+        )
+
+        log.info("Analyzing agenda with Claude: %s", meeting.title[:60])
+
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        }
+        payload = {
+            "model": self.config["model"],
+            "max_tokens": self.config["max_tokens"],
+            "messages": [{"role": "user", "content": prompt}],
+        }
+
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            log.error("Claude API error: %s", exc)
+            return {}
+
+        result = response.json()
+        raw_text = ""
+        for block in result.get("content", []):
+            if block.get("type") == "text":
+                raw_text += block["text"]
+
+        analysis = self._extract_json(raw_text)
+        if not analysis:
+            log.warning("Could not parse JSON from Claude response for %s", meeting.id)
+            analysis = {"raw_response": raw_text, "parse_error": True}
+
+        analysis_json_path.write_text(json.dumps(analysis, indent=2, default=str))
+        log.info("Agenda analysis saved: %s", analysis_json_path.name)
+
+        summary = self._build_summary(analysis, meeting)
+        summary_md_path.write_text(summary)
+        log.info("Summary saved: %s", summary_md_path.name)
+
+        return analysis
+
     def count_housing_mentions(self, text: str) -> int:
         """Count occurrences of housing keywords in text."""
         lower = text.lower()
@@ -703,6 +779,7 @@ class MeetingPipeline:
                 log.warning("Unknown city: %s", city)
                 continue
 
+            # YouTube discovery
             yt_url = city_config.get("youtube_url")
             if yt_url:
                 meetings = self.discovery.discover_from_youtube(city, yt_url, limit)
@@ -713,7 +790,71 @@ class MeetingPipeline:
                     else:
                         log.debug("  Already known: %s", m.id)
 
+            # Legistar discovery
+            legistar_client = city_config.get("legistar_client")
+            if legistar_client:
+                self._discover_legistar(city, city_config)
+
+    def _discover_legistar(
+        self, city: str, city_config: dict[str, Any],
+    ) -> None:
+        """Run Legistar discovery for a single city and merge into database."""
+        from legistar_discovery import LegistarDiscovery
+
+        legistar_client = city_config["legistar_client"]
+        body_filter = city_config.get("legistar_housing_bodies")
+        disc = LegistarDiscovery(legistar_client, city)
+
+        log.info("Running Legistar discovery for %s", city)
+        meetings = disc.discover_meetings(body_filter=body_filter)
+
+        for m in meetings:
+            existing = self.db.get(m.id)
+            if existing:
+                log.debug("  Already known: %s", m.id)
+                continue
+
+            # Check for duplicate by date + body name across sources
+            duplicate = self._find_duplicate_meeting(m)
+            if duplicate:
+                # Merge Legistar data into existing record
+                log.info(
+                    "  Merging Legistar data into existing meeting: %s",
+                    duplicate.id,
+                )
+                duplicate.legistar_event_id = m.legistar_event_id
+                duplicate.agenda_items = m.agenda_items
+                self.db.upsert(duplicate)
+            else:
+                self.db.upsert(m)
+                log.info("  Added (legistar): %s", m.title[:60])
+
+    def _find_duplicate_meeting(self, meeting: Meeting) -> Meeting | None:
+        """Find existing meeting matching by date and body name."""
+        body_lower = meeting.title.lower()
+        for existing in self.db.meetings.values():
+            if existing.source == "legistar":
+                continue
+            if existing.jurisdiction != meeting.jurisdiction:
+                continue
+            if existing.date != meeting.date:
+                continue
+            # Check if body name appears in the existing meeting's title
+            existing_lower = existing.title.lower()
+            # Extract body name from legistar title (format: "Body Name – YYYY-MM-DD")
+            parts = meeting.title.split(" – ")
+            if len(parts) >= 1:
+                legistar_body = parts[0].lower().strip()
+                if legistar_body in existing_lower or existing_lower in legistar_body:
+                    return existing
+        return None
+
     def _process_meeting(self, meeting: Meeting) -> None:
+        # Legistar meetings without video: analyze agenda directly
+        if meeting.source == "legistar" and not meeting.video_url:
+            self._process_legistar_agenda(meeting)
+            return
+
         # Step 1: Download audio
         audio_path = self.video.download_audio(meeting)
         if not audio_path:
@@ -766,6 +907,69 @@ class MeetingPipeline:
                 meeting.error = "analysis_failed"
         else:
             log.warning("Anthropic not available, skipping analysis")
+            meeting.error = "no_anthropic_key"
+
+        self.db.upsert(meeting)
+
+    def _process_legistar_agenda(self, meeting: Meeting) -> None:
+        """Process a Legistar meeting that has agenda items but no video."""
+        from legistar_discovery import LegistarDiscovery
+
+        # Extract event ID from the meeting id format: legistar_{client}_{event_id}
+        parts = meeting.id.split("_")
+        if len(parts) < 3:
+            meeting.error = "invalid_legistar_id"
+            self.db.upsert(meeting)
+            return
+
+        client = parts[1]
+        try:
+            event_id = int(parts[2])
+        except ValueError:
+            meeting.error = "invalid_legistar_event_id"
+            self.db.upsert(meeting)
+            return
+
+        disc = LegistarDiscovery(client, meeting.jurisdiction)
+        event = disc.get_event_details(event_id)
+        if not event or not event.items:
+            meeting.error = "no_agenda_items"
+            self.db.upsert(meeting)
+            return
+
+        agenda_text = disc.format_agenda_text(event)
+        meeting.housing_mentions = self.analyzer.count_housing_mentions(agenda_text)
+
+        # Store agenda items on the meeting record
+        meeting.agenda_items = [
+            {
+                "title": item.title,
+                "matter_name": item.matter_name,
+                "matter_type": item.matter_type,
+                "matter_status": item.matter_status,
+                "action_text": item.action_text,
+            }
+            for item in event.items
+        ]
+
+        if self.analyzer.is_available():
+            analysis = self.analyzer.analyze_agenda(agenda_text, meeting)
+            if analysis:
+                meeting.analysis_path = str(
+                    ANALYSIS_DIR / f"{meeting.id}_analysis.json"
+                )
+                meeting.summary_path = str(
+                    ANALYSIS_DIR / f"{meeting.id}_summary.md"
+                )
+                meeting.housing_relevance_score = analysis.get(
+                    "housing_relevance_score", 0.0
+                )
+                meeting.processed = True
+                meeting.error = ""
+            else:
+                meeting.error = "agenda_analysis_failed"
+        else:
+            log.warning("Anthropic not available, skipping agenda analysis")
             meeting.error = "no_anthropic_key"
 
         self.db.upsert(meeting)

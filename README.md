@@ -1,10 +1,10 @@
 # HousingEar - Housing Sentiment and Policy Monitor
 
-AI-powered pipeline for ingesting public city council, planning commission, housing policy committee meetings and extracting affordable housing policy intelligence. Automatically transcribes, analyzes, and structures housing discussions from YouTube and Granicus to track zoning changes, funding commitments, community sentiment, and regulatory trends across Colorado jurisdictions.
+AI-powered pipeline for ingesting public city council, planning commission, housing policy committee meetings and extracting affordable housing policy intelligence. Automatically transcribes, analyzes, and structures housing discussions from YouTube, Granicus, and Legistar to track zoning changes, funding commitments, community sentiment, and regulatory trends across Colorado jurisdictions.
 
 ## Features
 
-- **Meeting Discovery** – Scrape YouTube channels and Granicus portals for city council, planning commission, and housing committee recordings
+- **Meeting Discovery** – Scrape YouTube channels, Granicus portals, and Legistar APIs for city council, planning commission, and housing committee recordings and agendas
 - **Audio Download** – Extract audio via yt-dlp with configurable quality
 - **Transcription** – Convert speech to text with speaker diarization (Deepgram nova-2)
 - **AI Analysis** – Extract structured housing policy data using Claude (Anthropic API)
@@ -13,12 +13,12 @@ AI-powered pipeline for ingesting public city council, planning commission, hous
 
 ## Configured Cities
 
-| City | YouTube | Granicus |
-|------|---------|----------|
-| Denver | @DenverCityCouncil | denver.granicus.com |
-| Aurora | @CityofAuroraCO | aurora.granicus.com |
-| Lakewood | @CityofLakewood | lakewood.granicus.com |
-| Boulder | — | boulder.granicus.com |
+| City | YouTube | Granicus | Legistar |
+|------|---------|----------|----------|
+| Denver | @Denver8TV | denver.granicus.com | denver.legistar.com |
+| Aurora | @theaurorachannel | aurora.granicus.com | aurora.legistar.com |
+| Lakewood | @LakewoodCOgov | lakewood.granicus.com | — |
+| Boulder | @CityofBoulderGov | boulder.granicus.com | — |
 
 Add new cities in `config.py` without changing pipeline code.
 
@@ -76,6 +76,27 @@ python granicus_discovery.py --city Boulder
 python granicus_discovery.py --city Boulder --download-agendas
 ```
 
+### Legistar Discovery
+
+```bash
+# Discover meetings from Legistar (structured legislative data)
+python legistar_discovery.py --city Denver --days 90
+
+# List all legislative bodies (committees)
+python legistar_discovery.py --city Denver --list-bodies
+
+# Fetch a specific meeting's agenda items and legislation
+python legistar_discovery.py --city Denver --event-id 1381438
+
+# Filter to a specific committee
+python legistar_discovery.py --city Denver --body "Community Planning and Housing"
+
+# Download agendas and minutes
+python legistar_discovery.py --city Denver --download-agendas --download-minutes
+```
+
+Legistar provides structured legislative metadata (agenda items, votes, legislation text, attachments) that complements the audio transcription pipeline. No API key is required.
+
 ### Analytics & Reporting
 
 ```bash
@@ -105,6 +126,15 @@ python example_analysis.py --topics
 
 # Filter high-relevance meetings only
 python example_analysis.py --high-relevance --housing-filter 0.5
+
+# Track legislation lifecycle (Legistar)
+python example_analysis.py --legislation
+
+# Show vote records for housing matters (Legistar)
+python example_analysis.py --votes
+
+# Compare Legistar agenda data with transcription analysis
+python example_analysis.py --legistar-sync
 ```
 
 ## Data Structure
@@ -136,9 +166,13 @@ meetings_data/
   "summary_path": "meetings_data/analysis/...",
   "housing_mentions": 5,
   "housing_relevance_score": 0.72,
-  "processed": true
+  "processed": true,
+  "legistar_event_id": null,
+  "agenda_items": []
 }
 ```
+
+For Legistar-sourced meetings, the `id` follows the format `legistar_{client}_{EventId}` and `agenda_items` contains structured data from the Legistar API.
 
 ## Analysis Output Schema
 
@@ -175,23 +209,39 @@ meeting_ingestion_pipeline.py  # Core pipeline classes
 ├── MeetingDiscovery           #   YouTube channel scraping
 ├── VideoProcessor             #   Audio download via yt-dlp
 ├── TranscriptionService       #   Deepgram integration
-├── HousingAnalyzer            #   Claude API analysis
-├── MeetingPipeline            #   Orchestrator
+├── HousingAnalyzer            #   Claude API analysis (transcripts + agendas)
+├── MeetingPipeline            #   Orchestrator (YouTube + Granicus + Legistar)
 └── MeetingDatabase            #   JSON-backed storage
 granicus_discovery.py          # Granicus platform integration
+legistar_discovery.py          # Legistar Web API integration
+├── LegistarDiscovery          #   API client for events, bodies, legislation
+├── LegistarEvent/Body/Item    #   Structured data models
+└── CLI                        #   Standalone discovery commands
 example_analysis.py            # Analytics and reporting tools
 setup.py                       # Environment verification
 ```
+
+### Data Flow
+
+```
+YouTube ──────→ VideoProcessor → TranscriptionService → HousingAnalyzer ─→ MeetingDatabase
+Granicus ─────→ VideoProcessor → TranscriptionService → HousingAnalyzer ─→ MeetingDatabase
+Legistar ─────→ Agenda Items ──────────────────────→ HousingAnalyzer ─→ MeetingDatabase
+                  (+ votes, legislation, attachments)
+```
+
+Legistar meetings with video URLs feed into the standard video→transcribe→analyze pipeline. Meetings without video are analyzed directly from structured agenda items using a specialized agenda analysis prompt.
 
 ## Configuration
 
 All configuration lives in `config.py`:
 
-- **COLORADO_CITIES** – Add/remove jurisdictions with their YouTube and Granicus details
+- **COLORADO_CITIES** – Add/remove jurisdictions with their YouTube, Granicus, and Legistar details
 - **MEETING_TITLE_KEYWORDS** – Patterns for identifying meeting videos
 - **HOUSING_KEYWORDS** – Terms for relevance scoring
 - **ANALYSIS_PROMPT_TEMPLATE** – Claude prompt for policy extraction
 - **API_CONFIG** – Deepgram and Anthropic settings
+- **LEGISTAR_CONFIG** – Legistar API base URL, lookback period, rate limits, pagination
 - **PROCESSING** – Rate limits, quality, batch sizes
 
 ## Adding a New City
@@ -204,6 +254,9 @@ All configuration lives in `config.py`:
     "granicus_site": "fortcollins.granicus.com",
     "granicus_clip_id_prefix": "fortcollins",
     "meeting_bodies": ["City Council", "Planning & Zoning Board"],
+    # Optional: add Legistar if the city uses it
+    "legistar_client": "fortcollins",
+    "legistar_housing_bodies": ["City Council", "Planning & Zoning Board"],
 },
 ```
 

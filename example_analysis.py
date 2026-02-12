@@ -330,6 +330,184 @@ def topic_frequency() -> None:
         print()
 
 
+def track_legislation() -> None:
+    """Track legislation through its lifecycle from Legistar data."""
+    loader = AnalysisLoader()
+    pairs = loader.get_processed_meetings()
+
+    print(f"\n{'=' * 70}")
+    print(f"  Legislation Lifecycle Tracker")
+    print(f"{'=' * 70}\n")
+
+    # Collect all proposals with their statuses over time
+    lifecycle: dict[str, list[dict]] = defaultdict(list)
+    for meeting, analysis in pairs:
+        if meeting.source != "legistar":
+            continue
+        for proposal in analysis.get("policy_proposals", []):
+            desc = proposal.get("description", "")[:80]
+            if not desc:
+                continue
+            lifecycle[desc].append({
+                "date": meeting.date,
+                "jurisdiction": meeting.jurisdiction,
+                "status": proposal.get("status", "unknown"),
+                "type": proposal.get("type", "?"),
+                "vote": proposal.get("vote_result"),
+            })
+
+    if not lifecycle:
+        print("  No Legistar legislation data found. Run Legistar discovery first.\n")
+        return
+
+    # Show legislation sorted by most recent activity
+    sorted_items = sorted(
+        lifecycle.items(),
+        key=lambda x: max(e["date"] for e in x[1]),
+        reverse=True,
+    )
+
+    for desc, entries in sorted_items[:30]:
+        entries.sort(key=lambda e: e["date"])
+        latest = entries[-1]
+        print(f"  {desc}")
+        print(f"    Jurisdiction: {latest['jurisdiction']}")
+        print(f"    Type: {latest['type']}")
+        print(f"    Current status: {latest['status']}")
+        if latest.get("vote"):
+            print(f"    Vote: {latest['vote']}")
+        if len(entries) > 1:
+            statuses = " -> ".join(e["status"] for e in entries)
+            print(f"    History: {statuses}")
+        print()
+
+    print(f"  Total legislation items tracked: {len(lifecycle)}\n")
+
+
+def show_vote_records() -> None:
+    """Show vote records for housing-related matters from Legistar."""
+    loader = AnalysisLoader()
+
+    print(f"\n{'=' * 70}")
+    print(f"  Vote Records for Housing Matters")
+    print(f"{'=' * 70}\n")
+
+    db = MeetingDatabase()
+    vote_count = 0
+
+    for meeting in db.meetings.values():
+        if meeting.source != "legistar":
+            continue
+        if not meeting.agenda_items:
+            continue
+
+        for item in meeting.agenda_items:
+            # Check if housing-related
+            item_text = " ".join([
+                item.get("title", ""),
+                item.get("matter_name", ""),
+            ]).lower()
+            is_housing = any(kw.lower() in item_text for kw in HOUSING_KEYWORDS)
+            if not is_housing:
+                continue
+
+            action = item.get("action_text", "")
+            if not action:
+                continue
+
+            vote_count += 1
+            print(f"  [{meeting.jurisdiction}] [{meeting.date}]")
+            print(f"    Item: {item.get('title', '')[:70]}")
+            if item.get("matter_name"):
+                print(f"    Matter: {item['matter_name'][:70]}")
+            print(f"    Action: {action}")
+            print(f"    Status: {item.get('matter_status', 'N/A')}")
+            print()
+
+    if vote_count == 0:
+        print("  No housing-related vote records found.")
+        print("  Run Legistar discovery first to populate agenda data.\n")
+    else:
+        print(f"  Total housing vote actions: {vote_count}\n")
+
+
+def legistar_sync_report() -> None:
+    """Compare Legistar agenda data with transcription analysis."""
+    loader = AnalysisLoader()
+
+    print(f"\n{'=' * 70}")
+    print(f"  Legistar-Transcription Sync Report")
+    print(f"{'=' * 70}\n")
+
+    db = MeetingDatabase()
+    legistar_meetings = [
+        m for m in db.meetings.values() if m.source == "legistar"
+    ]
+    transcript_meetings = [
+        m for m in db.meetings.values() if m.source in ("youtube", "granicus")
+    ]
+
+    print(f"  Legistar meetings: {len(legistar_meetings)}")
+    print(f"  Transcript meetings: {len(transcript_meetings)}")
+    print()
+
+    # Find meetings that exist in both sources (same date + jurisdiction)
+    legistar_by_key = {}
+    for m in legistar_meetings:
+        key = (m.jurisdiction, m.date)
+        legistar_by_key.setdefault(key, []).append(m)
+
+    matched = 0
+    legistar_only = 0
+    transcript_only = 0
+
+    for m in transcript_meetings:
+        key = (m.jurisdiction, m.date)
+        if key in legistar_by_key:
+            matched += 1
+            leg_meetings = legistar_by_key[key]
+            if m.processed and any(lm.processed for lm in leg_meetings):
+                # Compare analyses
+                t_analysis = loader.get_analysis(m)
+                t_score = t_analysis.get("housing_relevance_score", 0)
+                t_topics = set(
+                    t.lower() for t in t_analysis.get("housing_topics", [])
+                )
+
+                for lm in leg_meetings:
+                    l_analysis = loader.get_analysis(lm)
+                    l_score = l_analysis.get("housing_relevance_score", 0)
+                    l_topics = set(
+                        t.lower() for t in l_analysis.get("housing_topics", [])
+                    )
+
+                    if abs(t_score - l_score) > 0.3 or t_topics != l_topics:
+                        print(f"  DISCREPANCY: {m.jurisdiction} {m.date}")
+                        print(f"    Transcript score: {t_score:.1%}")
+                        print(f"    Legistar score:   {l_score:.1%}")
+                        unique_t = t_topics - l_topics
+                        unique_l = l_topics - t_topics
+                        if unique_t:
+                            print(f"    Transcript-only topics: {', '.join(unique_t)}")
+                        if unique_l:
+                            print(f"    Legistar-only topics: {', '.join(unique_l)}")
+                        print()
+
+    for key in legistar_by_key:
+        if not any(
+            (m.jurisdiction, m.date) == key for m in transcript_meetings
+        ):
+            legistar_only += 1
+
+    transcript_only = len(transcript_meetings) - matched
+
+    print(f"  Coverage summary:")
+    print(f"    Both sources:     {matched}")
+    print(f"    Legistar only:    {legistar_only}")
+    print(f"    Transcript only:  {transcript_only}")
+    print()
+
+
 def compare_jurisdictions(cities: list[str]) -> None:
     """Generate a comparison report across multiple jurisdictions."""
     loader = AnalysisLoader()
@@ -531,6 +709,12 @@ def main() -> None:
                         help="Min relevance score filter (default: 0.3)")
     parser.add_argument("--high-relevance", action="store_true",
                         help="Show only high-relevance meetings")
+    parser.add_argument("--legislation", action="store_true",
+                        help="Track legislation through its lifecycle (Legistar)")
+    parser.add_argument("--votes", action="store_true",
+                        help="Show vote records for housing-related matters (Legistar)")
+    parser.add_argument("--legistar-sync", action="store_true",
+                        help="Compare Legistar agenda data with transcription analysis")
 
     args = parser.parse_args()
 
@@ -553,6 +737,12 @@ def main() -> None:
         topic_frequency()
     elif args.high_relevance:
         filter_housing_content(min_relevance=args.housing_filter)
+    elif args.legislation:
+        track_legislation()
+    elif args.votes:
+        show_vote_records()
+    elif args.legistar_sync:
+        legistar_sync_report()
     else:
         # Default: show stats for all cities
         print("\nHousing Intelligence Overview")
