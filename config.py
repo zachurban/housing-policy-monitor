@@ -26,8 +26,8 @@ MEETINGS_DB = DATA_DIR / "meetings.json"
 # ---------------------------------------------------------------------------
 COLORADO_CITIES = {
     "Denver": {
-        "youtube_channel": "@DenverCityCouncil",
-        "youtube_url": "https://www.youtube.com/@DenverCityCouncil/videos",
+        "youtube_channel": "@Denver8TV",
+        "youtube_url": "https://www.youtube.com/@Denver8TV/videos",
         "granicus_site": "denver.granicus.com",
         "granicus_clip_id_prefix": "denver",
         "meeting_bodies": [
@@ -37,8 +37,8 @@ COLORADO_CITIES = {
         ],
     },
     "Aurora": {
-        "youtube_channel": "@CityofAuroraCO",
-        "youtube_url": "https://www.youtube.com/@CityofAuroraCO/videos",
+        "youtube_channel": "@theaurorachannel",
+        "youtube_url": "https://www.youtube.com/@theaurorachannel/videos",
         "granicus_site": "aurora.granicus.com",
         "granicus_clip_id_prefix": "aurora",
         "meeting_bodies": [
@@ -48,8 +48,8 @@ COLORADO_CITIES = {
         ],
     },
     "Lakewood": {
-        "youtube_channel": "@CityofLakewood",
-        "youtube_url": "https://www.youtube.com/@CityofLakewood/videos",
+        "youtube_channel": "@LakewoodCOgov",
+        "youtube_url": "https://www.youtube.com/@LakewoodCOgov/videos",
         "granicus_site": "lakewood.granicus.com",
         "granicus_clip_id_prefix": "lakewood",
         "meeting_bodies": [
@@ -58,8 +58,8 @@ COLORADO_CITIES = {
         ],
     },
     "Boulder": {
-        "youtube_channel": None,
-        "youtube_url": None,
+        "youtube_channel": "@CityofBoulderGov",
+        "youtube_url": https://www.youtube.com/@CityofBoulderGov,
         "granicus_site": "boulder.granicus.com",
         "granicus_site_id": 5,
         "granicus_clip_id_prefix": "boulder",
